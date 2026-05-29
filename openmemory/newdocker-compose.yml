@@ -1,0 +1,25 @@
+services:
+  openmemory-mcp:
+    image: mem0/openmemory-mcp:local
+    build: api/
+    environment:
+      - USER=winc
+      - MEM0_API_URL=http://10.0.0.150:8888
+      - MEM0_API_KEY=m0sk_Z2-ulGxFLCRn0fgQjc04Gdz0KbLOOsXK_lWRnPBHsPc
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./api:/usr/src/openmemory
+
+  openmemory-ui:
+    build:
+      context: ui/
+      dockerfile: Dockerfile
+    image: mem0/openmemory-ui:latest
+    ports:
+      - "13000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://10.0.0.150:8765
+      - NEXT_PUBLIC_USER_ID=winc
+    depends_on:
+      - openmemory-mcp
