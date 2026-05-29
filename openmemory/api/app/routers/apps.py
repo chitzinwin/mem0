@@ -2,222 +2,180 @@ from typing import Optional
 from uuid import UUID
 
 from app.database import get_db
-from app.models import App, Memory, MemoryAccessLog, MemoryState
+from app.models import App, User
+from app.utils.memory import get_memory_client
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import desc, func
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/api/v1/apps", tags=["apps"])
 
-# Helper functions
-def get_app_or_404(db: Session, app_id: UUID) -> App:
-    app = db.query(App).filter(App.id == app_id).first()
-    if not app:
-        raise HTTPException(status_code=404, detail="App not found")
-    return app
 
-# List all apps with filtering
 @router.get("/")
-async def list_apps(
-    name: Optional[str] = None,
-    is_active: Optional[bool] = None,
-    sort_by: str = 'name',
-    sort_direction: str = 'asc',
-    page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100),
-    db: Session = Depends(get_db)
+async def get_apps(
+    db: Session = Depends(get_db),
+    user_id: Optional[str] = Query(None),
+    page: int = Query(1),
+    page_size: int = Query(10),
+    name: Optional[str] = Query(None),
+    is_active: Optional[bool] = Query(None),
+    sort_by: Optional[str] = Query(None),
+    sort_direction: Optional[str] = Query("asc"),
 ):
-    # Create a subquery for memory counts
-    memory_counts = db.query(
-        Memory.app_id,
-        func.count(Memory.id).label('memory_count')
-    ).filter(
-        Memory.state.in_([MemoryState.active, MemoryState.paused, MemoryState.archived])
-    ).group_by(Memory.app_id).subquery()
+    """List apps. Derives memory counts from upstream."""
+    query = db.query(App)
 
-    # Create a subquery for access counts
-    access_counts = db.query(
-        MemoryAccessLog.app_id,
-        func.count(func.distinct(MemoryAccessLog.memory_id)).label('access_count')
-    ).group_by(MemoryAccessLog.app_id).subquery()
-
-    # Base query
-    query = db.query(
-        App,
-        func.coalesce(memory_counts.c.memory_count, 0).label('total_memories_created'),
-        func.coalesce(access_counts.c.access_count, 0).label('total_memories_accessed')
-    )
-
-    # Join with subqueries
-    query = query.outerjoin(
-        memory_counts,
-        App.id == memory_counts.c.app_id
-    ).outerjoin(
-        access_counts,
-        App.id == access_counts.c.app_id
-    )
+    if user_id:
+        user = db.query(User).filter(User.user_id == user_id).first()
+        if user:
+            query = query.filter(App.owner_id == user.id)
 
     if name:
         query = query.filter(App.name.ilike(f"%{name}%"))
-
     if is_active is not None:
         query = query.filter(App.is_active == is_active)
-
-    # Apply sorting
-    if sort_by == 'name':
-        sort_field = App.name
-    elif sort_by == 'memories':
-        sort_field = func.coalesce(memory_counts.c.memory_count, 0)
-    elif sort_by == 'memories_accessed':
-        sort_field = func.coalesce(access_counts.c.access_count, 0)
-    else:
-        sort_field = App.name  # default sort
-
-    if sort_direction == 'desc':
-        query = query.order_by(desc(sort_field))
-    else:
-        query = query.order_by(sort_field)
 
     total = query.count()
     apps = query.offset((page - 1) * page_size).limit(page_size).all()
 
+    # Get memory counts from upstream
+    memory_client = get_memory_client()
+    app_memory_counts = {}
+    if memory_client and user_id:
+        try:
+            response = memory_client.get_all(filters={"user_id": user_id})
+            items = response.get("results", []) if isinstance(response, dict) else []
+            for mem in items:
+                app_name = (mem.get("metadata") or {}).get("mcp_client", "unknown")
+                app_memory_counts[app_name] = app_memory_counts.get(app_name, 0) + 1
+        except Exception:
+            pass
+
     return {
-        "total": total,
-        "page": page,
-        "page_size": page_size,
         "apps": [
             {
-                "id": app[0].id,
-                "name": app[0].name,
-                "is_active": app[0].is_active,
-                "total_memories_created": app[1],
-                "total_memories_accessed": app[2]
+                "id": str(app.id),
+                "name": app.name,
+                "is_active": app.is_active,
+                "total_memories_created": app_memory_counts.get(app.name, 0),
+                "total_memories_accessed": 0,
+                "created_at": app.created_at.isoformat() if app.created_at else None,
+                "updated_at": app.updated_at.isoformat() if app.updated_at else None,
             }
             for app in apps
-        ]
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
     }
 
-# Get app details
+
 @router.get("/{app_id}")
-async def get_app_details(
-    app_id: UUID,
-    db: Session = Depends(get_db)
-):
-    app = get_app_or_404(db, app_id)
-
-    # Get memory access statistics
-    access_stats = db.query(
-        func.count(MemoryAccessLog.id).label("total_memories_accessed"),
-        func.min(MemoryAccessLog.accessed_at).label("first_accessed"),
-        func.max(MemoryAccessLog.accessed_at).label("last_accessed")
-    ).filter(MemoryAccessLog.app_id == app_id).first()
+async def get_app(app_id: UUID, db: Session = Depends(get_db)):
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
 
     return {
+        "id": str(app.id),
+        "name": app.name,
         "is_active": app.is_active,
-        "total_memories_created": db.query(Memory)
-            .filter(Memory.app_id == app_id)
-            .count(),
-        "total_memories_accessed": access_stats.total_memories_accessed or 0,
-        "first_accessed": access_stats.first_accessed,
-        "last_accessed": access_stats.last_accessed
+        "total_memories_created": 0,
+        "total_memories_accessed": 0,
+        "first_accessed": None,
+        "last_accessed": None,
     }
 
-# List memories created by app
+
 @router.get("/{app_id}/memories")
-async def list_app_memories(
+async def get_app_memories(
     app_id: UUID,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100),
-    db: Session = Depends(get_db)
+    page: int = Query(1),
+    page_size: int = Query(10),
+    db: Session = Depends(get_db),
 ):
-    get_app_or_404(db, app_id)
-    query = db.query(Memory).filter(
-        Memory.app_id == app_id,
-        Memory.state.in_([MemoryState.active, MemoryState.paused, MemoryState.archived])
-    )
-    # Add eager loading for categories
-    query = query.options(joinedload(Memory.categories))
-    total = query.count()
-    memories = query.order_by(Memory.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    """Get memories created by this app from upstream."""
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
 
-    return {
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "memories": [
-            {
-                "id": memory.id,
-                "content": memory.content,
-                "created_at": memory.created_at,
-                "state": memory.state.value,
-                "app_id": memory.app_id,
-                "categories": [category.name for category in memory.categories],
-                "metadata_": memory.metadata_
-            }
-            for memory in memories
+    # Find the user who owns this app
+    user = db.query(User).filter(User.id == app.owner_id).first()
+    if not user:
+        return {"memories": [], "total": 0, "page": page, "page_size": page_size}
+
+    memory_client = get_memory_client()
+    if not memory_client:
+        return {"memories": [], "total": 0, "page": page, "page_size": page_size}
+
+    try:
+        response = memory_client.get_all(filters={"user_id": user.user_id})
+        items = response.get("results", []) if isinstance(response, dict) else []
+
+        # Filter by app name in metadata
+        app_memories = [
+            m for m in items
+            if (m.get("metadata") or {}).get("mcp_client") == app.name
         ]
-    }
 
-# List memories accessed by app
+        total = len(app_memories)
+        start = (page - 1) * page_size
+        paged = app_memories[start:start + page_size]
+
+        return {
+            "memories": [
+                {
+                    "id": m.get("id", ""),
+                    "user_id": m.get("user_id", ""),
+                    "content": m.get("memory", ""),
+                    "state": "active",
+                    "created_at": m.get("created_at"),
+                    "updated_at": m.get("updated_at"),
+                    "deleted_at": None,
+                    "archived_at": None,
+                    "app_id": str(app_id),
+                    "app_name": app.name,
+                    "vector": None,
+                    "metadata_": m.get("metadata") or {},
+                    "categories": [],
+                }
+                for m in paged
+            ],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+    except Exception:
+        return {"memories": [], "total": 0, "page": page, "page_size": page_size}
+
+
 @router.get("/{app_id}/accessed")
-async def list_app_accessed_memories(
+async def get_app_accessed_memories(
     app_id: UUID,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100),
-    db: Session = Depends(get_db)
+    page: int = Query(1),
+    page_size: int = Query(10),
+    db: Session = Depends(get_db),
 ):
-    
-    # Get memories with access counts
-    query = db.query(
-        Memory,
-        func.count(MemoryAccessLog.id).label("access_count")
-    ).join(
-        MemoryAccessLog,
-        Memory.id == MemoryAccessLog.memory_id
-    ).filter(
-        MemoryAccessLog.app_id == app_id
-    ).group_by(
-        Memory.id
-    ).order_by(
-        desc("access_count")
-    )
-
-    # Add eager loading for categories
-    query = query.options(joinedload(Memory.categories))
-
-    total = query.count()
-    results = query.offset((page - 1) * page_size).limit(page_size).all()
-
-    return {
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "memories": [
-            {
-                "memory": {
-                    "id": memory.id,
-                    "content": memory.content,
-                    "created_at": memory.created_at,
-                    "state": memory.state.value,
-                    "app_id": memory.app_id,
-                    "app_name": memory.app.name if memory.app else None,
-                    "categories": [category.name for category in memory.categories],
-                    "metadata_": memory.metadata_
-                },
-                "access_count": count
-            }
-            for memory, count in results
-        ]
-    }
+    """No access tracking in stateless proxy mode."""
+    return {"memories": [], "total": 0, "page": page, "page_size": page_size}
 
 
 @router.put("/{app_id}")
-async def update_app_details(
+async def update_app(
     app_id: UUID,
-    is_active: bool,
-    db: Session = Depends(get_db)
+    is_active: Optional[bool] = Query(None),
+    db: Session = Depends(get_db),
 ):
-    app = get_app_or_404(db, app_id)
-    app.is_active = is_active
+    app = db.query(App).filter(App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    if is_active is not None:
+        app.is_active = is_active
+
     db.commit()
-    return {"status": "success", "message": "Updated app details successfully"}
+    db.refresh(app)
+    return {
+        "id": str(app.id),
+        "name": app.name,
+        "is_active": app.is_active,
+    }
