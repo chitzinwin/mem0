@@ -87,6 +87,7 @@ export const useAppsApi = (): UseAppsApiReturn => {
         page_size: String(page_size)
       });
 
+      if (user_id) queryParams.append('user_id', user_id);
       if (name) queryParams.append('name', name);
       if (is_active !== undefined) queryParams.append('is_active', String(is_active));
       if (sort_by) queryParams.append('sort_by', sort_by);

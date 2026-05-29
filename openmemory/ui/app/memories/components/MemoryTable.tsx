@@ -5,6 +5,7 @@ import {
   Pause,
   Archive,
   Play,
+  Tag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +41,7 @@ import { GoPackage } from "react-icons/go";
 import { CiCalendar } from "react-icons/ci";
 import { useRouter } from "next/navigation";
 import Categories from "@/components/shared/categories";
+import { EntityList } from "@/components/shared/entity-badge";
 import { useUI } from "@/hooks/useUI";
 import {
   Tooltip,
@@ -137,6 +139,12 @@ export function MemoryTable() {
                 Categories
               </div>
             </TableHead>
+            <TableHead className="border-zinc-700">
+              <div className="flex items-center">
+                <Tag className="mr-1" size={15} />
+                Entities
+              </div>
+            </TableHead>
             <TableHead className="w-[140px] border-zinc-700">
               <div className="flex items-center">
                 <GoPackage className="mr-1" />
@@ -222,6 +230,16 @@ export function MemoryTable() {
                     concat={true}
                   />
                 </div>
+              </TableCell>
+              <TableCell className="">
+                <EntityList
+                  entities={memory.entities || []}
+                  onEntityClick={(entityName) => {
+                    // Navigate to entity search or filter
+                    router.push(`/memories?entity_filter=${encodeURIComponent(entityName)}`);
+                  }}
+                  maxDisplay={2}
+                />
               </TableCell>
               <TableCell className="w-[140px] text-center">
                 <SourceApp source={memory.app_name} />

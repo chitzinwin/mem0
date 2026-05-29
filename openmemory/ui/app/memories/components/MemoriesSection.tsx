@@ -1,7 +1,10 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Table, Tag } from "lucide-react";
 import { Category, Client } from "../../../components/types";
 import { MemoryTable } from "./MemoryTable";
+import { EntityGroupedMemories } from "@/components/shared/entity-grouped-memories";
 import { MemoryPagination } from "./MemoryPagination";
 import { CreateMemoryDialog } from "./CreateMemoryDialog";
 import { PageSizeSelector } from "./PageSizeSelector";
@@ -17,6 +20,7 @@ export function MemoriesSection() {
   const [totalItems, setTotalItems] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<"table" | "entities">("table");
 
   const currentPage = Number(searchParams.get("page")) || 1;
   const itemsPerPage = Number(searchParams.get("size")) || 10;
@@ -79,7 +83,40 @@ export function MemoriesSection() {
       <div>
         {memories.length > 0 ? (
           <>
-            <MemoryTable />
+            {/* View Mode Toggle */}
+            <div className="flex items-center justify-between mb-4">
+              <ToggleGroup
+                type="single"
+                value={viewMode}
+                onValueChange={(value) => value && setViewMode(value as "table" | "entities")}
+                className="bg-zinc-900 border border-zinc-800 rounded-md p-1"
+              >
+                <ToggleGroupItem
+                  value="table"
+                  className="data-[state=on]:bg-zinc-700 data-[state=on]:text-white text-zinc-400"
+                >
+                  <Table className="w-4 h-4 mr-2" />
+                  Table View
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="entities"
+                  className="data-[state=on]:bg-zinc-700 data-[state=on]:text-white text-zinc-400"
+                >
+                  <Tag className="w-4 h-4 mr-2" />
+                  Entity Groups
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+            
+            {/* Content based on view mode */}
+            {viewMode === "table" ? (
+              <MemoryTable />
+            ) : (
+              <EntityGroupedMemories
+                memories={memories}
+                onMemoryClick={(memoryId) => router.push(`/memory/${memoryId}`)}
+              />
+            )}
             <div className="flex items-center justify-between mt-4">
               <PageSizeSelector
                 pageSize={itemsPerPage}
