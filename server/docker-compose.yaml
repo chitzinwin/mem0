@@ -2,6 +2,7 @@ name: mem0-dev
 
 services:
   mem0:
+    container_name: mem0-api
     build:
       context: ..
       dockerfile: server/dev.Dockerfile
@@ -10,67 +11,80 @@ services:
     env_file:
       - .env
     networks:
+      - infra
+      - librechat
       - mem0_network
     volumes:
       - ./history:/app/history
       - .:/app
-    depends_on:
-      postgres:
-        condition: service_healthy
     command: >
       sh -c "rm -rf /app/packages && pip install -q --force-reinstall --no-deps mem0ai && alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
     environment:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=
-      - DASHBOARD_URL=http://localhost:3000
+      - DASHBOARD_URL=${DASHBOARD_URL:-http://10.0.0.150:8210}
       - APP_DB_NAME=mem0_app
       - JWT_SECRET=${JWT_SECRET}
       - AUTH_DISABLED=${AUTH_DISABLED:-false}
       - MEM0_TELEMETRY=${MEM0_TELEMETRY:-true}
 
-  postgres:
-      image: ankane/pgvector:v0.5.1
-      restart: on-failure
-      shm_size: "128mb"
-      networks:
-        - mem0_network
-      environment:
-        - POSTGRES_USER=postgres
-        - POSTGRES_PASSWORD=postgres
-      healthcheck:
-        test: ["CMD", "pg_isready", "-q", "-d", "postgres", "-U", "postgres"]
-        interval: 5s
-        timeout: 5s
-        retries: 5
-      volumes:
-        - postgres_db:/var/lib/postgresql/data
-        - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
-      ports:
-        - "8432:5432"
-
   mem0-dashboard:
     build: ./dashboard
     ports:
-      - "3000:3000"
+      - "8210:3000"
     networks:
       - mem0_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8888
-      - API_INTERNAL_URL=http://mem0:8000
+      - NEXT_PUBLIC_API_URL=http://10.0.0.150:8888
+      - API_INTERNAL_URL=http://mem0-api:8000
       - NEXT_PUBLIC_INSTANCE_NAME=Mem0
+      - NODE_ENV=development
+      - AUTH_DISABLED=true
+      - NEXT_PUBLIC_AUTH_DISABLED=true
     depends_on:
-      mem0:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      - mem0
 
-volumes:
-  postgres_db:
+  openmemory-mcp:
+    image: mem0/openmemory-mcp:local
+    build: ../openmemory/api/
+    environment:
+      - USER=winc
+      - MEM0_API_URL=http://mem0-api:8000
+      - MEM0_API_KEY=m0sk_Z2-ulGxFLCRn0fgQjc04Gdz0KbLOOsXK_lWRnPBHsPc
+    ports:
+      - "8765:8765"
+    volumes:
+      - ../openmemory/api:/usr/src/openmemory
+    networks:
+      - mem0_network
+    depends_on:
+      - mem0
+
+  openmemory-ui:
+    build:
+      context: ../openmemory/ui/
+      dockerfile: Dockerfile
+    image: mem0/openmemory-ui:latest
+    ports:
+      - "13000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://10.0.0.150:8765
+      - NEXT_PUBLIC_USER_ID=winc
+    networks:
+      - mem0_network
+    depends_on:
+      - openmemory-mcp
+
 
 networks:
+  infra:
+    external: true
+    name: nginxproxy
+  librechat:
+    external: true
+    name: librechat
   mem0_network:
     driver: bridge

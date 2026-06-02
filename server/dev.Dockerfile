@@ -8,7 +8,8 @@ ENV PATH="/root/.local/bin:$PATH"
 
 # Copy requirements first for better caching
 COPY server/requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install -r requirements.txt && \
+    python -m spacy download en_core_web_sm
 
 # Install mem0 in editable mode using Poetry
 WORKDIR /app/packages

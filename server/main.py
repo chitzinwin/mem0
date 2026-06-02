@@ -127,9 +127,16 @@ DEFAULT_CONFIG = {
         "provider": "openai",
         "config": {"api_key": OPENAI_API_KEY, "temperature": 0.2, "model": DEFAULT_LLM_MODEL},
     },
-    "embedder": {"provider": "openai", "config": {"api_key": OPENAI_API_KEY, "model": DEFAULT_EMBEDDER_MODEL}},
+    "embedder": {
+        "provider": "ollama", 
+        "config": {"model": DEFAULT_EMBEDDER_MODEL, "ollama_base_url": "http://ollama:11434"}
+    },
     "history_db_path": HISTORY_DB_PATH,
 }
+
+# Add embedding_model_dims only if environment variable is provided
+if os.environ.get("EMBEDDING_MODEL_DIMS"):
+    DEFAULT_CONFIG["vector_store"]["config"]["embedding_model_dims"] = int(os.environ["EMBEDDING_MODEL_DIMS"])
 
 
 set_session_factory(SessionLocal)
@@ -417,6 +424,14 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
     """Search for memories based on a query."""
     try:
         params = {k: v for k, v in search_req.model_dump().items() if v is not None and k != "query"}
+        # v3 requires entity IDs inside filters, not as top-level kwargs
+        entity_keys = {"user_id", "agent_id", "run_id"}
+        filters = params.pop("filters", None) or {}
+        for key in list(params):
+            if key in entity_keys:
+                filters[key] = params.pop(key)
+        if filters:
+            params["filters"] = filters
         return get_memory_instance().search(query=search_req.query, **params)
     except Exception:
         raise upstream_error()

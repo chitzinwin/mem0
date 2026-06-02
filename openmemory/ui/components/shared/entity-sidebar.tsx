@@ -36,19 +36,54 @@ export function EntitySidebar({
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Mock entities for now - in real implementation, fetch from API
+  // Fetch real entities from API
   useEffect(() => {
-    const mockEntities: Entity[] = [
-      { text: "Emma Watson", type: "PERSON", linked_memories: ["1", "2"] },
-      { text: "Netflix", type: "ORG", linked_memories: ["1", "3", "4"] },
-      { text: "David Kim", type: "PERSON", linked_memories: ["2"] },
-      { text: "Microsoft", type: "ORG", linked_memories: ["3"] },
-      { text: "React", type: "PROPER", linked_memories: ["4", "5"] },
-      { text: "Software Architecture", type: "COMPOUND", linked_memories: ["1", "5"] },
-    ];
-    setEntities(mockEntities);
-    setFilteredEntities(mockEntities);
-  }, []);
+    const fetchEntities = async () => {
+      try {
+        setLoading(true);
+        const response = await fetch(`/api/v1/entities/?user_id=winc`);
+        if (response.ok) {
+          const data = await response.json();
+          // Transform API response to Entity format
+          const apiEntities: Entity[] = data.map((entity: any) => ({
+            text: entity.id || "Unknown",
+            type: entity.type?.toUpperCase() || "COMPOUND",
+            linked_memories: [] // TODO: Get memory count from API
+          }));
+          setEntities(apiEntities);
+          setFilteredEntities(apiEntities);
+        } else {
+          console.error("Failed to fetch entities:", response.statusText);
+          // Fallback to mock data if API fails
+          const mockEntities: Entity[] = [
+            { text: "Emma Watson", type: "PERSON", linked_memories: ["1", "2"] },
+            { text: "Netflix", type: "ORG", linked_memories: ["1", "3", "4"] },
+            { text: "David Kim", type: "PERSON", linked_memories: ["2"] },
+            { text: "Microsoft", type: "ORG", linked_memories: ["3"] },
+            { text: "React", type: "PROPER", linked_memories: ["4", "5"] },
+            { text: "Software Architecture", type: "COMPOUND", linked_memories: ["1", "5"] },
+          ];
+          setEntities(mockEntities);
+          setFilteredEntities(mockEntities);
+        }
+      } catch (error) {
+        console.error("Error fetching entities:", error);
+        // Fallback to mock data on error
+        const mockEntities: Entity[] = [
+          { text: "Emma Watson", type: "PERSON", linked_memories: ["1", "2"] },
+          { text: "Netflix", type: "ORG", linked_memories: ["1", "3", "4"] },
+        ];
+        setEntities(mockEntities);
+        setFilteredEntities(mockEntities);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (isOpen) {
+      fetchEntities();
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (searchQuery.trim() === "") {
